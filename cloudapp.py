@@ -18,8 +18,8 @@ st.set_page_config(
 @st.cache_resource
 def init_supabase():
     try:
-        url = st.secrets["https://dgxrelxdjbvilprwvynn.supabase.co"]
-        key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRneHJlbHhkamJ2aWxwcnd2eW5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3OTY2NjMsImV4cCI6MjA2ODM3MjY2M30.lf9OLIJqHJqAuwfM4Uoke6H1MPXF7PoMik2-Sf7Ks7U"]
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except KeyError:
         st.error("❌ Supabase credentials not configured. Please set up secrets in Streamlit Cloud.")
