@@ -418,31 +418,51 @@ def data_management_page(data):
     
     # Display recent entries with delete option
     st.subheader("Your Entries")
-    if not data.empty:
+    if not data.empty and 'id' in data.columns:
         # Sort by timestamp (most recent first)
-        display_data = data.sort_values('created_at', ascending=False)
+        if 'created_at' in data.columns:
+            display_data = data.sort_values('created_at', ascending=False)
+        else:
+            display_data = data
         
         # Show entries with delete buttons
         for idx, row in display_data.iterrows():
-            with st.expander(f"Entry from {pd.to_datetime(row['created_at']).strftime('%Y-%m-%d %H:%M')} - Anxiety: {row['anxiety_level']}/10"):
+            # Create timestamp display
+            if 'created_at' in row and pd.notna(row['created_at']):
+                timestamp_str = pd.to_datetime(row['created_at']).strftime('%Y-%m-%d %H:%M')
+            else:
+                timestamp_str = "Unknown time"
+            
+            # Create anxiety display
+            anxiety_str = f"{row['anxiety_level']}/10" if 'anxiety_level' in row and pd.notna(row['anxiety_level']) else "N/A"
+            
+            with st.expander(f"Entry from {timestamp_str} - Anxiety: {anxiety_str}"):
                 col1, col2 = st.columns([4, 1])
                 
                 with col1:
-                    st.write(f"**Food Source:** {row['food_source']}")
-                    st.write(f"**Eating Location:** {row['eating_location']}")
-                    st.write(f"**Anxiety Level:** {row['anxiety_level']}/10")
-                    if row['food_eaten']:
+                    if 'food_source' in row:
+                        st.write(f"**Food Source:** {row['food_source']}")
+                    if 'eating_location' in row:
+                        st.write(f"**Eating Location:** {row['eating_location']}")
+                    if 'anxiety_level' in row:
+                        st.write(f"**Anxiety Level:** {row['anxiety_level']}/10")
+                    if 'food_eaten' in row and row['food_eaten']:
                         st.write(f"**Food Eaten:** {row['food_eaten']}")
-                    if row['concerns']:
+                    if 'concerns' in row and row['concerns']:
                         st.write(f"**Concerns:** {row['concerns']}")
                 
                 with col2:
-                    if st.button(f"🗑️ Delete", key=f"delete_{row['id']}"):
-                        if delete_entry(row['id']):
-                            st.success("Entry deleted!")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete entry")
+                    if 'id' in row and pd.notna(row['id']):
+                        if st.button(f"🗑️ Delete", key=f"delete_{row['id']}"):
+                            if delete_entry(row['id']):
+                                st.success("Entry deleted!")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete entry")
+                    else:
+                        st.write("Cannot delete - no ID")
+    elif not data.empty:
+        st.warning("Data exists but missing ID column. This might be old CSV data.")
     
     # Data export
     st.subheader("Export Data")
