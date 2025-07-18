@@ -3,7 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
-import os
+from supabase import create_client, Client
+import json
 
 # Page configuration
 st.set_page_config(
@@ -13,27 +14,140 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Data file path
-DATA_FILE = "food_anxiety_data.csv"
+# Initialize Supabase client
+@st.cache_resource
+def init_supabase():
+    try:
+        url = st.secrets["https://dgxrelxdjbvilprwvynn.supabase.co"]
+        key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRneHJlbHhkamJ2aWxwcnd2eW5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3OTY2NjMsImV4cCI6MjA2ODM3MjY2M30.lf9OLIJqHJqAuwfM4Uoke6H1MPXF7PoMik2-Sf7Ks7U"]
+        return create_client(url, key)
+    except KeyError:
+        st.error("❌ Supabase credentials not configured. Please set up secrets in Streamlit Cloud.")
+        st.stop()
 
-@st.cache_data
-def load_data():
-    """Load existing data or create empty DataFrame"""
-    if os.path.exists(DATA_FILE):
-        return pd.read_csv(DATA_FILE)
-    else:
-        columns = [
-            'timestamp', 'food_source', 'eating_location', 'anxiety_level',
-            'breathing_difficulty', 'swallowing_difficulty', 'scratchy_throat',
-            'stomach_pain', 'chest_pain', 'reflux', 'food_eaten', 'concerns',
-            'additional_comments', 'took_meds', 'med_types', 'meds_helped'
-        ]
-        return pd.DataFrame(columns=columns)
+supabase: Client = init_supabase()
 
-def save_data(df):
-    """Save data to CSV file"""
-    df.to_csv(DATA_FILE, index=False)
-    st.cache_data.clear()  # Clear cache to reload fresh data
+def check_authentication():
+    """Handle user authentication"""
+    
+    # Check if user is already logged in
+    if "user" in st.session_state and st.session_state.user:
+        return True
+    
+    # Authentication UI
+    st.markdown("# 🍽️ Food Anxiety Tracker")
+    st.markdown("Please sign in to access your personal tracking data.")
+    
+    # Create tabs for Sign In and Sign Up
+    tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
+    
+    with tab1:
+        st.subheader("Sign In")
+        with st.form("signin_form"):
+            email = st.text_input("Email", placeholder="your@email.com")
+            password = st.text_input("Password", type="password")
+            signin_submitted = st.form_submit_button("Sign In", type="primary")
+            
+            if signin_submitted:
+                if email and password:
+                    try:
+                        response = supabase.auth.sign_in_with_password({
+                            "email": email,
+                            "password": password
+                        })
+                        if response.user:
+                            st.session_state.user = response.user
+                            st.session_state.session = response.session
+                            st.success("✅ Successfully signed in!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Sign in failed. Please check your credentials.")
+                    except Exception as e:
+                        st.error(f"❌ Sign in error: {str(e)}")
+                else:
+                    st.error("Please enter both email and password.")
+    
+    with tab2:
+        st.subheader("Create Account")
+        with st.form("signup_form"):
+            new_email = st.text_input("Email", placeholder="your@email.com", key="signup_email")
+            new_password = st.text_input("Password", type="password", key="signup_password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+            signup_submitted = st.form_submit_button("Create Account", type="secondary")
+            
+            if signup_submitted:
+                if new_email and new_password and confirm_password:
+                    if new_password == confirm_password:
+                        if len(new_password) >= 6:
+                            try:
+                                response = supabase.auth.sign_up({
+                                    "email": new_email,
+                                    "password": new_password
+                                })
+                                if response.user:
+                                    st.success("✅ Account created! Please check your email to verify your account, then sign in.")
+                                else:
+                                    st.error("❌ Account creation failed.")
+                            except Exception as e:
+                                st.error(f"❌ Signup error: {str(e)}")
+                        else:
+                            st.error("Password must be at least 6 characters long.")
+                    else:
+                        st.error("Passwords do not match.")
+                else:
+                    st.error("Please fill in all fields.")
+    
+    return False
+
+def load_user_data():
+    """Load data for the current user from Supabase"""
+    try:
+        user_id = st.session_state.user.id
+        response = supabase.table('food_anxiety_entries').select('*').eq('user_id', user_id).order('created_at', desc=True).execute()
+        
+        if response.data:
+            df = pd.DataFrame(response.data)
+            # Convert created_at to timestamp for compatibility
+            df['timestamp'] = df['created_at']
+            return df
+        else:
+            # Return empty DataFrame with expected columns
+            columns = [
+                'id', 'user_id', 'created_at', 'timestamp', 'food_source', 'eating_location', 
+                'anxiety_level', 'breathing_difficulty', 'swallowing_difficulty', 
+                'scratchy_throat', 'stomach_pain', 'chest_pain', 'reflux', 
+                'food_eaten', 'concerns', 'additional_comments', 'took_meds', 
+                'med_types', 'meds_helped'
+            ]
+            return pd.DataFrame(columns=columns)
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return pd.DataFrame()
+
+def save_entry(entry_data):
+    """Save a new entry to Supabase"""
+    try:
+        user_id = st.session_state.user.id
+        entry_data['user_id'] = user_id
+        
+        response = supabase.table('food_anxiety_entries').insert(entry_data).execute()
+        
+        if response.data:
+            return True
+        else:
+            return False
+    except Exception as e:
+        st.error(f"Error saving entry: {str(e)}")
+        return False
+
+def delete_entry(entry_id):
+    """Delete an entry from Supabase"""
+    try:
+        response = supabase.table('food_anxiety_entries').delete().eq('id', entry_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting entry: {str(e)}")
+        return False
 
 def severity_to_numeric(severity):
     """Convert severity text to numeric value"""
@@ -41,16 +155,34 @@ def severity_to_numeric(severity):
     return mapping.get(severity, 0)
 
 def main():
-    st.title("🍽️ Food Anxiety Tracker")
-    st.markdown("Track your food anxiety and symptoms over time")
+    # Check authentication first
+    if not check_authentication():
+        st.stop()
     
-    # Load data
-    data = load_data()
+    # Main app interface
+    st.title("🍽️ Food Anxiety Tracker")
+    st.markdown(f"Welcome back, {st.session_state.user.email}!")
+    
+    # Load user data
+    data = load_user_data()
     
     # Sidebar for navigation
     st.sidebar.title("Navigation")
     page = st.sidebar.radio("Go to", ["Data Entry", "Visualizations", "Data Management"])
     
+    # Add user info and logout in sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**Logged in as:**\n{st.session_state.user.email}")
+    
+    if st.sidebar.button("🔓 Logout"):
+        try:
+            supabase.auth.sign_out()
+            st.session_state.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Logout error: {str(e)}")
+    
+    # Page routing
     if page == "Data Entry":
         data_entry_page(data)
     elif page == "Visualizations":
@@ -129,8 +261,7 @@ def data_entry_page(data):
         
         if submitted:
             # Create new entry
-            new_entry = {
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            entry_data = {
                 'food_source': food_source,
                 'eating_location': eating_location,
                 'anxiety_level': anxiety_level,
@@ -144,16 +275,16 @@ def data_entry_page(data):
                 'concerns': concerns,
                 'additional_comments': additional_comments,
                 'took_meds': took_meds_bool,
-                'med_types': ', '.join(med_types),
+                'med_types': ', '.join(med_types) if med_types else '',
                 'meds_helped': meds_helped_bool
             }
             
-            # Add to dataframe and save
-            new_data = pd.concat([data, pd.DataFrame([new_entry])], ignore_index=True)
-            save_data(new_data)
-            
-            st.success("✅ Entry submitted successfully!")
-            st.balloons()
+            if save_entry(entry_data):
+                st.success("✅ Entry submitted successfully!")
+                st.balloons()
+                st.rerun()
+            else:
+                st.error("❌ Failed to save entry. Please try again.")
 
 def visualizations_page(data):
     st.header("📊 Visualizations")
@@ -285,53 +416,46 @@ def data_management_page(data):
     st.subheader("Data Overview")
     st.write(f"Total entries: {len(data)}")
     
-    # Display recent entries
-    st.subheader("Recent Entries")
+    # Display recent entries with delete option
+    st.subheader("Your Entries")
     if not data.empty:
         # Sort by timestamp (most recent first)
-        recent_data = data.sort_values('timestamp', ascending=False).head(10)
-        st.dataframe(recent_data, use_container_width=True)
+        display_data = data.sort_values('created_at', ascending=False)
+        
+        # Show entries with delete buttons
+        for idx, row in display_data.iterrows():
+            with st.expander(f"Entry from {pd.to_datetime(row['created_at']).strftime('%Y-%m-%d %H:%M')} - Anxiety: {row['anxiety_level']}/10"):
+                col1, col2 = st.columns([4, 1])
+                
+                with col1:
+                    st.write(f"**Food Source:** {row['food_source']}")
+                    st.write(f"**Eating Location:** {row['eating_location']}")
+                    st.write(f"**Anxiety Level:** {row['anxiety_level']}/10")
+                    if row['food_eaten']:
+                        st.write(f"**Food Eaten:** {row['food_eaten']}")
+                    if row['concerns']:
+                        st.write(f"**Concerns:** {row['concerns']}")
+                
+                with col2:
+                    if st.button(f"🗑️ Delete", key=f"delete_{row['id']}"):
+                        if delete_entry(row['id']):
+                            st.success("Entry deleted!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to delete entry")
     
     # Data export
     st.subheader("Export Data")
     if not data.empty:
-        csv = data.to_csv(index=False)
+        # Prepare data for export (remove internal fields)
+        export_data = data.drop(columns=['id', 'user_id'], errors='ignore')
+        csv = export_data.to_csv(index=False)
         st.download_button(
-            label="Download CSV",
+            label="📥 Download Your Data (CSV)",
             data=csv,
             file_name=f"food_anxiety_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
-    
-    # Data deletion
-    st.subheader("⚠️ Data Deletion")
-    st.warning("This action cannot be undone!")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("Delete Last Entry", type="secondary"):
-            if not data.empty:
-                # Remove the last entry (most recent)
-                new_data = data.iloc[:-1]
-                save_data(new_data)
-                st.success("Last entry deleted!")
-                st.rerun()
-            else:
-                st.error("No data to delete!")
-    
-    with col2:
-        if st.button("Delete All Data", type="secondary"):
-            if st.session_state.get('confirm_delete', False):
-                # Create empty dataframe with same columns
-                empty_df = pd.DataFrame(columns=data.columns)
-                save_data(empty_df)
-                st.success("All data deleted!")
-                st.session_state['confirm_delete'] = False
-                st.rerun()
-            else:
-                st.session_state['confirm_delete'] = True
-                st.error("Click again to confirm deletion of ALL data!")
 
 if __name__ == "__main__":
     main()
